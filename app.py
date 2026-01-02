@@ -43,8 +43,12 @@ def analyze_resume(file_bytes, job_desc):
         {job_desc}
         
         INSTRUCTIONS:
-        Evaluate based on 4 criteria: Experience, Skills, Knowledge, Tools.
-        Provide Score (0-100) and Thai Reasoning.
+        1. Extract relevant information from the resume correctly.
+        2. Evaluate the candidate based on 4 criteria: Experience, Skills, Knowledge, Tools.
+        3. Provide a Score (0-100) for each criteria.
+        4. Provide Reasoning:
+       - Detect the language used in the JOB DESCRIPTION.
+       - WRITE THE REASONING IN THE SAME LANGUAGE as the Job Description.
         
         OUTPUT FORMAT (JSON Only):
         {{
