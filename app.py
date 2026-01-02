@@ -3,6 +3,7 @@ import os
 import time
 import json
 import pandas as pd
+import tempfile 
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -11,20 +12,21 @@ from dotenv import load_dotenv
 load_dotenv()
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-# Core function
+# --- CORE FUNCTION ---
 def analyze_resume(file_bytes, job_desc):
     client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+    temp_path = None
 
     try:
-        # we have to save a file (be a temporary file) because the SDK expects a file path or file-like object
-        
-        temp_filename = "temp_resume.pdf"
-        with open(temp_filename, "wb") as f:
-            f.write(file_bytes.getbuffer())
+        # use tempfile to save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_bytes.getbuffer())
+            temp_path = tmp.name  # เก็บ Path ไว้ใช้และลบทีหลัง
 
-        file_upload = client.files.upload(file=temp_filename)
+        # upload
+        file_upload = client.files.upload(file=temp_path)
         
-        # Process
+        # process loop
         while file_upload.state.name == "PROCESSING":
             time.sleep(1)
             file_upload = client.files.get(name=file_upload.name)
@@ -32,128 +34,146 @@ def analyze_resume(file_bytes, job_desc):
         if file_upload.state.name == "FAILED":
             return {"error": "File upload failed"}
 
-    except Exception as e:
-        return {"error": str(e)}
+        # prompt
+        prompt_text = f"""
+        Act as an Expert Technical Recruiter.
+        Analyze the attached Resume PDF against the provided Job Description.
+        
+        JOB DESCRIPTION:
+        {job_desc}
+        
+        INSTRUCTIONS:
+        Evaluate based on 4 criteria: Experience, Skills, Knowledge, Tools.
+        Provide Score (0-100) and Thai Reasoning.
+        
+        OUTPUT FORMAT (JSON Only):
+        {{
+            "candidate_name": "String",
+            "total_score": Integer,
+            "analysis": {{
+                "experience_education": {{ "score": Integer, "reasoning": "String" }},
+                "skills": {{ "score": Integer, "reasoning": "String" }},
+                "knowledge": {{ "score": Integer, "reasoning": "String" }},
+                "tools": {{ "score": Integer, "reasoning": "String" }}
+            }},
+            "summary": "String"
+        }}
+        """
 
-    # Prompt
-    prompt_text = f"""
-    Act as an Expert Technical Recruiter.
-    Analyze the attached Resume PDF against the provided Job Description.
-    
-    JOB DESCRIPTION:
-    {job_desc}
-    
-    # 4 parts to evaluate:
-    INSTRUCTIONS:
-    Evaluate based on 4 criteria: Experience, Skills, Knowledge, Tools.
-    Provide Score (0-100) and Thai Reasoning.
-    
-    OUTPUT FORMAT (JSON Only):
-    {{
-        "candidate_name": "String",
-        "total_score": Integer,
-        "analysis": {{
-            "experience_education": {{ "score": Integer, "reasoning": "String" }},
-            "skills": {{ "score": Integer, "reasoning": "String" }},
-            "knowledge": {{ "score": Integer, "reasoning": "String" }},
-            "tools": {{ "score": Integer, "reasoning": "String" }}
-        }},
-        "summary": "String"
-    }}
-    """
-
-    try:
         response = client.models.generate_content(
-            model="gemini-flash-latest", # หรือ gemini-flash-latest
+            model="gemini-flash-latest", 
             contents=[file_upload, prompt_text],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
             )
         )
-        # Clean up temp file (optional)
-        # os.remove(temp_filename) 
-        
         return json.loads(response.text)
-        
+
     except Exception as e:
         return {"error": str(e)}
+        
+    finally:
+        # 4. Cleanup: ลบไฟล์ temp ทิ้งเสมอ ไม่ว่าจะ error หรือไม่
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
-# --- STREAMLIT UI ---
+# STREAMLIT UI
 st.set_page_config(page_title="AI Resume Screener", layout="wide")
 
-st.title("Resume Analysis")
-st.write("เครื่องมือช่วยวิเคราะห์ Resume")
+st.title("📄 Resume Analysis AI")
+st.markdown("เครื่องมือวิเคราะห์และให้คะแนน Resume ตาม Job Description")
 
 # Inputs
 with st.sidebar:
     st.header("1. Job Description")
-    job_description = st.text_area("รายละเอียดเกี่ยวกับตำแหน่งงาน", height=300)
+    job_description = st.text_area("รายละเอียดงาน", height=300, placeholder="Position: Data Scientist...")
     
     st.header("2. Upload Resumes")
     uploaded_files = st.file_uploader("อัพโหลดไฟล์ PDF", type=["pdf"], accept_multiple_files=True)
     
-    process_btn = st.button("เริ่มวิเคราะห์", type="primary")
+    process_btn = st.button("Start Analysis / เริ่มวิเคราะห์ ", type="primary")
 
 # Results
 if process_btn and job_description and uploaded_files:
-    st.success(f"กำลังวิเคราะห์ {len(uploaded_files)} ไฟล์")
+    st.info(f"Processing {len(uploaded_files)} file(s)")
     
     results = []
     progress_bar = st.progress(0)
     
     for i, uploaded_file in enumerate(uploaded_files):
-        # show current status
-        st.toast(f"กำลังวิเคราะห์: {uploaded_file.name}")
+        st.toast(f"reading {uploaded_file.name}")
         
-        # call function AI
         data = analyze_resume(uploaded_file, job_description)
         
         if "error" not in data:
-            # store results in list to make a table later
             results.append({
                 "File Name": uploaded_file.name,
                 "Candidate Name": data.get("candidate_name", "Unknown"),
                 "Total Score": data.get("total_score", 0),
                 "Skills Score": data["analysis"]["skills"]["score"],
                 "Summary": data.get("summary", ""),
-                "Full Data": data # เก็บ Raw Data ไว้ดูละเอียด
+                # For detailed view
+                "Exp Score": data["analysis"]["experience_education"]["score"],
+                "Know Score": data["analysis"]["knowledge"]["score"],
+                "Tools Score": data["analysis"]["tools"]["score"],
+                "Full Data": data 
             })
         else:
             st.error(f"Error analyzing {uploaded_file.name}: {data['error']}")
         
-        # Update Progress Bar
         progress_bar.progress((i + 1) / len(uploaded_files))
 
-    # show the results
+    st.success("Done!")
     st.divider()
     
     if results:
-        # convert to DataFrame 
+        # Create DataFrame
         df = pd.DataFrame(results)
-        
-        # sort by Total Score
         df = df.sort_values(by="Total Score", ascending=False)
         
-        # show summary table
-        st.subheader("ตารางอันดับผู้สมัคร")
+        # Highlight High Scores
+        def highlight_score(val):
+            color = 'green' if val >= 80 else 'orange' if val >= 50 else 'red'
+            return f'color: {color}; font-weight: bold'
+
+        # Show Table
+        st.subheader("Results Summary")
+        
+        # Apply highlighting
         st.dataframe(
-            df[["Candidate Name", "Total Score", "Skills Score", "Summary"]],
-            use_container_width=True,
-            hide_index=True
+            df[["Candidate Name", "Total Score", "Skills Score", "Summary"]]
+            .style.applymap(highlight_score, subset=['Total Score', 'Skills Score']),
+            use_container_width=True
         )
 
-        # show detailed information
-        st.subheader("รายละเอียดข้อมูล")
+        # Export Button
+        col_dl1, col_dl2 = st.columns([1, 4])
+        with col_dl1:
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name='resume_analysis_results.csv',
+                mime='text/csv',
+            )
+        
+        # Detailed View
+        st.subheader("Detailed Analysis per Candidate")
         for index, row in df.iterrows():
-            with st.expander(f"{row['Candidate Name']} (Score: {row['Total Score']})"):
+            with st.expander(f"Rank {index+1}: {row['Candidate Name']} (Total: {row['Total Score']})"):
                 col1, col2 = st.columns(2)
-
-                # get analysis data
                 analysis = row["Full Data"]["analysis"]
                 
                 with col1:
-                    st.markdown(f"**Skills ({analysis['skills']['score']}/100):**\n{analysis['skills']['reasoning']}")
-                    st.markdown(f"**Experience ({analysis['experience_education']['score']}/100):**\n{analysis['experience_education']['reasoning']}")
+                    st.markdown(f"Skills ({analysis['skills']['score']}/100):")
+                    st.info(analysis['skills']['reasoning'])
+                    
+                    st.markdown(f"Experience ({analysis['experience_education']['score']}/100):")
+                    st.write(analysis['experience_education']['reasoning'])
+                    
                 with col2:
-                    st.markdown(f"**Knowledge ({analysis['knowledge']['score']}/100):**\n{analysis['knowledge']['reasoning']}")
-                    st.markdown(f"**Tools ({analysis['tools']['score']}/100):**\n{analysis['tools']['reasoning']}")
+                    st.markdown(f"Knowledge ({analysis['knowledge']['score']}/100):")
+                    st.write(analysis['knowledge']['reasoning'])
+
+                    st.markdown(f"Tools ({analysis['tools']['score']}/100):")
+                    st.write(analysis['tools']['reasoning'])
