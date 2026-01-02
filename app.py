@@ -21,7 +21,7 @@ def analyze_resume(file_bytes, job_desc):
         # use tempfile to save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file_bytes.getbuffer())
-            temp_path = tmp.name  # เก็บ Path ไว้ใช้และลบทีหลัง
+            temp_path = tmp.name  # store temp file path
 
         # upload
         file_upload = client.files.upload(file=temp_path)
@@ -77,14 +77,14 @@ def analyze_resume(file_bytes, job_desc):
         return {"error": str(e)}
         
     finally:
-        # 4. Cleanup: ลบไฟล์ temp ทิ้งเสมอ ไม่ว่าจะ error หรือไม่
+        # Cleanup temp file
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 # STREAMLIT UI
 st.set_page_config(page_title="AI Resume Screener", layout="wide")
 
-st.title("📄 Resume Analysis AI")
+st.title("Resume Analysis Tool")
 st.markdown("เครื่องมือวิเคราะห์และให้คะแนน Resume ตาม Job Description")
 
 # Inputs
